@@ -1,11 +1,12 @@
 import './style.css'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L, { type Map as LeafletMap } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
 type CarStatus = 'В поездке' | 'Свободен' | 'На зарядке' | 'Вне сервиса'
 type FleetFilter = 'all' | 'trip' | 'free' | 'charge' | 'out' | 'alerts'
 type Incident = { time: string; message: string; critical: boolean; icon: string }
+type LogTemplate = Omit<Incident, 'time'>
 type TripState = { routeIndex: number; segmentIndex: number; segmentProgress: number; speed: number }
 type CarIndicatorKey = 'engine' | 'battery' | 'wheel' | 'temperature' | 'lidar'
 
@@ -61,36 +62,36 @@ const extraFleet: Car[] = [
   { id: 'K404KK 78', model: 'Lada Granta', charge: 43, status: 'На зарядке', chargingIcon: true },
 ]
 
-const defaultIncidents: Incident[] = [
-  { time: '19:41', message: 'Ошибка системы охлаждения', critical: true, icon: '/engine.svg' },
-  { time: '19:40', message: 'Ошибка датчика лидара\n(Левый фронтальный)', critical: true, icon: '/lidar.svg' },
-  { time: '19:39', message: 'Резкое падение напряжения в блоке\nB-12', critical: true, icon: '/battery.svg' },
-  { time: '19:19', message: 'Температура процессора достигла 85°C', critical: true, icon: '/temperature.svg' },
-  { time: '19:06', message: 'Автоматическая остановка:\nпрепятствие на пути', critical: false, icon: '/wheel.svg' },
-  { time: '18:54', message: 'Начало поездки (Заказ №4512)', critical: false, icon: '/battery-charge-28-regular.svg' },
+const defaultIncidentTemplates: LogTemplate[] = [
+  { message: 'Ошибка системы охлаждения', critical: true, icon: '/engine.svg' },
+  { message: 'Ошибка датчика лидара\n(Левый фронтальный)', critical: true, icon: '/lidar.svg' },
+  { message: 'Резкое падение напряжения в блоке\nB-12', critical: true, icon: '/battery.svg' },
+  { message: 'Температура процессора достигла 85°C', critical: true, icon: '/temperature.svg' },
+  { message: 'Автоматическая остановка:\nпрепятствие на пути', critical: false, icon: '/wheel.svg' },
+  { message: 'Начало поездки (Заказ №4512)', critical: false, icon: '/battery-charge-28-regular.svg' },
 ]
 
-const logsByCarId: Record<string, Incident[]> = {
+const logsByCarId: Record<string, LogTemplate[]> = {
   'E103KK 96': [
-    { time: '19:41', message: 'Ошибка системы охлаждения', critical: true, icon: '/engine.svg' },
-    { time: '19:39', message: 'Перегрузка на канале CAN-2', critical: true, icon: '/lidar.svg' },
-    { time: '19:23', message: 'Резкое торможение на Тверской', critical: false, icon: '/wheel.svg' },
-    { time: '19:12', message: 'Маршрут обновлен диспетчером', critical: false, icon: '/battery.svg' },
+    { message: 'Ошибка системы охлаждения', critical: true, icon: '/engine.svg' },
+    { message: 'Перегрузка на канале CAN-2', critical: true, icon: '/lidar.svg' },
+    { message: 'Резкое торможение на Тверской', critical: false, icon: '/wheel.svg' },
+    { message: 'Маршрут обновлен диспетчером', critical: false, icon: '/battery.svg' },
   ],
   'P941PM 96': [
-    { time: '19:30', message: 'Ожидание следующего заказа', critical: false, icon: '/wheel.svg' },
-    { time: '19:19', message: 'Связь стабильна', critical: false, icon: '/lidar.svg' },
-    { time: '19:07', message: 'Переход в режим свободен', critical: false, icon: '/battery.svg' },
+    { message: 'Ожидание следующего заказа', critical: false, icon: '/wheel.svg' },
+    { message: 'Связь стабильна', critical: false, icon: '/lidar.svg' },
+    { message: 'Переход в режим свободен', critical: false, icon: '/battery.svg' },
   ],
   'H008OC 77': [
-    { time: '19:37', message: 'Подключено к зарядной станции #3', critical: false, icon: '/battery-charge-28-regular.svg' },
-    { time: '19:20', message: 'Оценка времени заряда: 22 мин', critical: false, icon: '/battery.svg' },
-    { time: '19:10', message: 'Скорость заряда: 120 кВт', critical: false, icon: '/engine.svg' },
+    { message: 'Подключено к зарядной станции #3', critical: false, icon: '/battery-charge-28-regular.svg' },
+    { message: 'Оценка времени заряда: 22 мин', critical: false, icon: '/battery.svg' },
+    { message: 'Скорость заряда: 120 кВт', critical: false, icon: '/engine.svg' },
   ],
   'E004PP 77': [
-    { time: '19:34', message: 'Авто выведено из сервиса', critical: true, icon: '/warning-line.svg' },
-    { time: '19:28', message: 'Потеря связи с модулем lidar', critical: true, icon: '/lidar.svg' },
-    { time: '19:13', message: 'Требуется осмотр инженера', critical: true, icon: '/engine.svg' },
+    { message: 'Авто выведено из сервиса', critical: true, icon: '/warning-line.svg' },
+    { message: 'Потеря связи с модулем lidar', critical: true, icon: '/lidar.svg' },
+    { message: 'Требуется осмотр инженера', critical: true, icon: '/engine.svg' },
   ],
 }
 
@@ -116,6 +117,77 @@ const statusColor: Record<CarStatus, string> = {
 const getStatusColor = (car: Car) =>
   car.status === 'В поездке' && car.hasAlert ? '#ff0000' : statusColor[car.status]
 
+function formatLogClock(d: Date) {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function shuffleLogTemplates<T extends LogTemplate>(items: readonly T[]): T[] {
+  const out = [...items]
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    const a = out[i]!
+    out[i] = out[j]!
+    out[j] = a
+  }
+  return out
+}
+
+function logTemplatesWithTimes(templates: LogTemplate[], now: Date): Incident[] {
+  return templates.map((row, idx) => {
+    const d = new Date(now.getTime())
+    d.setMinutes(d.getMinutes() - idx)
+    return { ...row, time: formatLogClock(d) }
+  })
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.setAttribute('readonly', '')
+      ta.style.position = 'fixed'
+      ta.style.left = '-9999px'
+      document.body.appendChild(ta)
+      ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      return ok
+    } catch {
+      return false
+    }
+  }
+}
+
+function formatLiveLogTime(minutesAgo: number, pulse: number) {
+  void pulse
+  const d = new Date()
+  d.setMinutes(d.getMinutes() - minutesAgo)
+  return formatLogClock(d)
+}
+
+const globalLogTemplates: Array<{ message: string; critical: boolean; icon: string }> = [
+  { message: 'Перестроение маршрута из-за дорожных работ', critical: false, icon: '/wheel.svg' },
+  { message: 'Потеря пакета телеметрии > 2с', critical: true, icon: '/lidar.svg' },
+  { message: 'Рекуперация энергии активна', critical: false, icon: '/battery.svg' },
+  { message: 'Ограничение мощности тягового инвертора', critical: true, icon: '/engine.svg' },
+  { message: 'Автоматическая смена полосы завершена', critical: false, icon: '/wheel.svg' },
+  { message: 'Калибровка лидар-модуля завершена', critical: false, icon: '/lidar.svg' },
+  { message: 'Перегрев батарейного модуля B3', critical: true, icon: '/temperature.svg' },
+  { message: 'Станция зарядки подтвердила сессию', critical: false, icon: '/battery-charge-28-regular.svg' },
+  { message: 'Снижение точности GPS, переход на inertial fusion', critical: true, icon: '/warning-line.svg' },
+  { message: 'Обновление HD-карты участка выполнено', critical: false, icon: '/lidar.svg' },
+  { message: 'Низкое давление в контуре охлаждения', critical: true, icon: '/temperature.svg' },
+  { message: 'Контроль сцепления: корректировка крутящего момента', critical: false, icon: '/engine.svg' },
+  { message: 'Стабилизация BMS: балансировка ячеек', critical: false, icon: '/battery.svg' },
+  { message: 'Детектировано аномальное препятствие на маршруте', critical: true, icon: '/warning-line.svg' },
+  { message: 'Канал V2X восстановлен', critical: false, icon: '/lidar.svg' },
+  { message: 'Система автопилота переведена в режим осторожного движения', critical: true, icon: '/engine.svg' },
+]
+
 function BatteryDots({ charge }: { charge: number }) {
   const active = Math.round(charge / 20)
   const activeColor = charge < 20 ? '#ff0000' : charge <= 60 ? '#ff8a00' : '#6c9f72'
@@ -129,6 +201,30 @@ function BatteryDots({ charge }: { charge: number }) {
         />
       ))}
     </div>
+  )
+}
+
+function PreloaderPixelTaxi() {
+  return (
+    <svg
+      className="preloader-pixel-taxi"
+      viewBox="0 0 24 10"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+      shapeRendering="crispEdges"
+    >
+      <rect x="2" y="4" width="17" height="4" fill="#ffdd2d" />
+      <rect x="4" y="2" width="11" height="3" fill="#ffdd2d" />
+      <rect x="5" y="1" width="9" height="2" fill="#ffdd2d" />
+      <rect x="6" y="0" width="7" height="1" fill="#ffdd2d" />
+      <rect x="17" y="5" width="5" height="3" fill="#e6c628" />
+      <rect x="5" y="3" width="4" height="2" fill="#2d4a6f" />
+      <rect x="10" y="3" width="4" height="2" fill="#2d4a6f" />
+      <rect x="4" y="7" width="4" height="3" fill="#1a1d21" />
+      <rect x="14" y="7" width="4" height="3" fill="#1a1d21" />
+      <rect x="7" y="1" width="2" height="1" fill="#ffffff" />
+      <rect x="21" y="5" width="2" height="1" fill="#fff9d6" />
+    </svg>
   )
 }
 
@@ -209,6 +305,13 @@ const ROAD_ROUTES: [number, number][][] = [
 const hashUid = (uid: string) => uid.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)
 const normalizedHash = (uid: string) => (hashUid(uid) % 997) / 997
 const indicatorOrder: CarIndicatorKey[] = ['engine', 'battery', 'wheel', 'temperature', 'lidar']
+const indicatorLabels: Record<CarIndicatorKey, string> = {
+  engine: 'Двигатель',
+  battery: 'Батарея',
+  wheel: 'Шасси и колеса',
+  temperature: 'Температурный контур',
+  lidar: 'Лидар и сенсоры',
+}
 
 const escapeHtml = (value: string) =>
   value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
@@ -245,6 +348,76 @@ const buildTooltipHtml = (car: Car) => {
   `
 }
 
+function MapLogoMark() {
+  const [showHeart, setShowHeart] = useState(false)
+  const heartTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (heartTimerRef.current !== null) window.clearTimeout(heartTimerRef.current)
+    }
+  }, [])
+
+  const handleClick = () => {
+    if (heartTimerRef.current !== null) window.clearTimeout(heartTimerRef.current)
+    setShowHeart(true)
+    heartTimerRef.current = window.setTimeout(() => {
+      setShowHeart(false)
+      heartTimerRef.current = null
+    }, 1000)
+  }
+
+  return (
+    <button
+      type="button"
+      className={`logo-mark-btn${showHeart ? ' logo-mark-btn--heart' : ''}`}
+      onClick={handleClick}
+      aria-label="Логотип"
+    >
+      <svg viewBox="0 0 71 24" xmlns="http://www.w3.org/2000/svg" className="logo-mark-svg" aria-hidden="true">
+        <g className="logo-mark-text">
+          <path
+            d="M36.2298 14.0461H32.7765L32.1663 15.6299H29.0506L33.0232 6.54236H36.035L40.0076 15.6299H36.8399L36.2298 14.0461ZM35.3859 11.8391L34.5031 9.55423L33.6203 11.8391H35.3859Z"
+            fill="#DDDDDD"
+          />
+          <path
+            d="M47.8438 10.9563L50.5311 15.6299H47.0778L45.3382 12.3454H44.4814V15.6299H41.4176V6.54236H44.4814V9.93071H45.4161L47.3504 6.54236H50.5441L47.8438 10.9563Z"
+            fill="#DDDDDD"
+          />
+          <path
+            d="M56.3115 15.8376C55.3508 15.8376 54.4853 15.6386 53.7151 15.2404C52.9448 14.8337 52.339 14.2711 51.8976 13.5527C51.4648 12.8257 51.2484 12.0035 51.2484 11.0861C51.2484 10.1687 51.4648 9.35084 51.8976 8.63249C52.339 7.90549 52.9448 7.34293 53.7151 6.9448C54.4853 6.53803 55.3508 6.33464 56.3115 6.33464C57.1943 6.33464 57.9819 6.49043 58.6743 6.802C59.3667 7.11357 59.9379 7.56362 60.3879 8.15215L58.4536 9.87878C57.891 9.16909 57.2289 8.81424 56.4673 8.81424C55.8268 8.81424 55.3119 9.02196 54.9224 9.43739C54.5329 9.84416 54.3382 10.3937 54.3382 11.0861C54.3382 11.7785 54.5329 12.3324 54.9224 12.7479C55.3119 13.1546 55.8268 13.358 56.4673 13.358C57.2289 13.358 57.891 13.0032 58.4536 12.2935L60.3879 14.0201C59.9379 14.6086 59.3667 15.0587 58.6743 15.3703C57.9819 15.6818 57.1943 15.8376 56.3115 15.8376Z"
+            fill="#DDDDDD"
+          />
+          <path
+            d="M61.9627 6.54236H64.9746V11.2679L68.1033 6.54236H70.9854V15.6299H67.9735V10.9174L64.8578 15.6299H61.9627V6.54236Z"
+            fill="#DDDDDD"
+          />
+        </g>
+        <g className="logo-mark-shield">
+          <path
+            fillRule="evenodd"
+            clipRule="evenodd"
+            d="M24 0H21.3333V2.66667H18.6667L18.6667 5.31435H16V2.64769H18.6667L18.6667 0H16V2.66667H13.3333L13.3333 5.31435H10.6667L10.6667 2.66667H8L8 5.31435H5.33333V2.64769H8L8 0H5.33333V2.66667H2.66667V0H4.1999e-07L0 2.64769H2.66667V5.31435H0L4.1999e-07 12.0703C4.1999e-07 15.1646 1.65068 18.0239 4.33031 19.5712L12 24L19.6697 19.5712C22.3493 18.0239 24 15.1646 24 12.0703V0ZM10.6667 0L10.6667 2.64769H13.3333L13.3333 0H10.6667ZM24 2.64769H21.3333V5.31435H24V2.64769Z"
+            fill="#DDDDDD"
+          />
+          <path
+            fillRule="evenodd"
+            clipRule="evenodd"
+            d="M6.58679 6.35286V10.107C7.10015 9.52726 8.03353 9.13492 9.10072 9.13492H10.2605V13.499C10.2605 14.6601 9.945 15.6763 9.47693 16.2353H14.5216C14.0545 15.6758 13.7397 14.6608 13.7397 13.5012V9.13492H14.8995C15.9667 9.13492 16.9001 9.52726 17.4135 10.107V6.35286H6.58679Z"
+            fill="#191919"
+          />
+        </g>
+        <g className="logo-mark-heart">
+          <path
+            d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
+            fill="#DDDDDD"
+          />
+        </g>
+      </svg>
+    </button>
+  )
+}
+
 function App() {
   const fleetListRef = useRef<HTMLDivElement | null>(null)
   const globalLogListRef = useRef<HTMLDivElement | null>(null)
@@ -268,40 +441,109 @@ function App() {
   const [globalScrollTop, setGlobalScrollTop] = useState(0)
   const [globalScrollHeight, setGlobalScrollHeight] = useState(1)
   const [globalClientHeight, setGlobalClientHeight] = useState(1)
-  const allFleet = useMemo(
-    () =>
-      [...fleet, ...extraFleet].map((car, idx) => {
-        const normalizedAlert = car.status === 'Вне сервиса' ? false : Boolean(car.hasAlert)
-        const rawLogs = logsByCarId[car.id] ?? defaultIncidents
-        const normalizedLogs = normalizedAlert
-          ? rawLogs
-          : Array.from({ length: 4 }).map((_, logIdx) => {
-              const template = normalStatusTemplates[(idx + logIdx) % normalStatusTemplates.length]
-              const minute = 58 - logIdx * 3
-              const time = `19:${String(minute).padStart(2, '0')}`
-              return {
-                time,
-                message: template.message,
-                critical: false,
-                icon: template.icon,
-              }
-            })
+  const [logTick, setLogTick] = useState(0)
+  const [liveLogPulse, setLiveLogPulse] = useState(0)
+  const allFleet = useMemo(() => {
+    const now = new Date()
+    return [...fleet, ...extraFleet].map((car, idx) => {
+      const normalizedAlert = car.status === 'Вне сервиса' ? false : Boolean(car.hasAlert)
+      const rawTemplates = logsByCarId[car.id] ?? defaultIncidentTemplates
+      const normalizedLogs = normalizedAlert
+        ? logTemplatesWithTimes(shuffleLogTemplates(rawTemplates), now)
+        : logTemplatesWithTimes(
+            shuffleLogTemplates(
+              Array.from({ length: 4 }).map((_, logIdx) => {
+                const template = normalStatusTemplates[(idx + logIdx) % normalStatusTemplates.length]
+                return {
+                  message: template.message,
+                  critical: false as const,
+                  icon: template.icon,
+                }
+              }),
+            ),
+            now,
+          )
 
-        return {
-          ...car,
-          hasAlert: normalizedAlert,
-          alertIndicators: car.status === 'Вне сервиса' ? [] : car.alertIndicators ?? [],
-          uid: `${car.id}-${idx}`,
-          logs: normalizedLogs,
-        }
-      }),
-    [],
-  )
+      return {
+        ...car,
+        hasAlert: normalizedAlert,
+        alertIndicators: car.status === 'Вне сервиса' ? [] : car.alertIndicators ?? [],
+        uid: `${car.id}-${idx}`,
+        logs: normalizedLogs,
+      }
+    })
+  }, [logTick])
   const [activeFilter, setActiveFilter] = useState<FleetFilter>('all')
   const [selectedCarUid, setSelectedCarUid] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [isPreloaderVisible, setIsPreloaderVisible] = useState(true)
+  const [isGlobalLogExpanded, setIsGlobalLogExpanded] = useState(false)
+  const [statusCopyToastVisible, setStatusCopyToastVisible] = useState(false)
+  const statusCopyToastTimerRef = useRef<number | null>(null)
+
+  const showStatusCopiedToast = useCallback(() => {
+    if (statusCopyToastTimerRef.current !== null) window.clearTimeout(statusCopyToastTimerRef.current)
+    setStatusCopyToastVisible(true)
+    statusCopyToastTimerRef.current = window.setTimeout(() => {
+      setStatusCopyToastVisible(false)
+      statusCopyToastTimerRef.current = null
+    }, 2500)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (statusCopyToastTimerRef.current !== null) window.clearTimeout(statusCopyToastTimerRef.current)
+    }
+  }, [])
+
+  const handleCopyLogStatus = useCallback(
+    (text: string) => {
+      void copyTextToClipboard(text).then((ok) => {
+        if (ok) showStatusCopiedToast()
+      })
+    },
+    [showStatusCopiedToast],
+  )
+
   const isIndicatorHot = (key: CarIndicatorKey) =>
     Boolean(selectedCar?.hasAlert && selectedCar?.alertIndicators?.includes(key))
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setIsPreloaderVisible(false)
+    }, 3000)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setLiveLogPulse((n) => n + 1)
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    const bump = () => setLogTick((n) => n + 1)
+    const id = window.setInterval(bump, 60_000)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') bump()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isGlobalLogExpanded) return
+    const map = leafletMapRef.current
+    if (!map) return
+    const timer = window.setTimeout(() => {
+      map.invalidateSize()
+    }, 120)
+    return () => window.clearTimeout(timer)
+  }, [isGlobalLogExpanded])
 
   const alertCount = useMemo(() => allFleet.filter((car) => car.hasAlert).length, [allFleet])
   const filteredFleet = useMemo(() => {
@@ -346,34 +588,13 @@ function App() {
 
   const selectedCar = useMemo(() => allFleet.find((car) => car.uid === selectedCarUid) ?? null, [allFleet, selectedCarUid])
   const globalCarLogs = useMemo(() => {
-    const templates: Array<{ message: string; critical: boolean; icon: string }> = [
-      { message: 'Перестроение маршрута из-за дорожных работ', critical: false, icon: '/wheel.svg' },
-      { message: 'Потеря пакета телеметрии > 2с', critical: true, icon: '/lidar.svg' },
-      { message: 'Рекуперация энергии активна', critical: false, icon: '/battery.svg' },
-      { message: 'Ограничение мощности тягового инвертора', critical: true, icon: '/engine.svg' },
-      { message: 'Автоматическая смена полосы завершена', critical: false, icon: '/wheel.svg' },
-      { message: 'Калибровка лидар-модуля завершена', critical: false, icon: '/lidar.svg' },
-      { message: 'Перегрев батарейного модуля B3', critical: true, icon: '/temperature.svg' },
-      { message: 'Станция зарядки подтвердила сессию', critical: false, icon: '/battery-charge-28-regular.svg' },
-      { message: 'Снижение точности GPS, переход на inertial fusion', critical: true, icon: '/warning-line.svg' },
-      { message: 'Обновление HD-карты участка выполнено', critical: false, icon: '/lidar.svg' },
-      { message: 'Низкое давление в контуре охлаждения', critical: true, icon: '/temperature.svg' },
-      { message: 'Контроль сцепления: корректировка крутящего момента', critical: false, icon: '/engine.svg' },
-      { message: 'Стабилизация BMS: балансировка ячеек', critical: false, icon: '/battery.svg' },
-      { message: 'Детектировано аномальное препятствие на маршруте', critical: true, icon: '/warning-line.svg' },
-      { message: 'Канал V2X восстановлен', critical: false, icon: '/lidar.svg' },
-      { message: 'Система автопилота переведена в режим осторожного движения', critical: true, icon: '/engine.svg' },
-    ]
-
-    const baseHour = 19
-    const baseMinute = 58
-    return templates.map((template, idx) => {
+    const now = new Date()
+    const shuffled = shuffleLogTemplates(globalLogTemplates)
+    return shuffled.map((template, idx) => {
       const car = allFleet[idx % allFleet.length]
-      const totalMinutes = baseHour * 60 + baseMinute - idx
-      const hours = Math.floor(totalMinutes / 60)
-      const minutes = ((totalMinutes % 60) + 60) % 60
-      const time = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
-
+      const d = new Date(now.getTime())
+      d.setMinutes(d.getMinutes() - idx)
+      const time = formatLogClock(d)
       return {
         ...template,
         time,
@@ -381,7 +602,7 @@ function App() {
         sourceUid: car.uid ?? null,
       }
     })
-  }, [allFleet])
+  }, [allFleet, logTick])
 
   useEffect(() => {
     setSelectedCarUid(null)
@@ -594,12 +815,13 @@ function App() {
     ]
     freeCars.forEach((car, idx) => {
       const [lat, lng] = freeAnchors[idx % freeAnchors.length]
-      const marker = L.circleMarker([lat, lng], {
-        radius: 6,
-        color: '#00ff48',
-        fillColor: '#00ff48',
-        fillOpacity: 0.92,
-        weight: 2,
+      const marker = L.marker([lat, lng], {
+        icon: L.divIcon({
+          className: 'free-car-marker-wrap',
+          html: '<span class="free-car-marker-ring" aria-hidden="true"></span>',
+          iconSize: [12, 12],
+          iconAnchor: [6, 6],
+        }),
       })
         .bindTooltip(buildTooltipHtml(car), { direction: 'top', offset: [0, -8], opacity: 1, className: 'map-tooltip-dark' })
         .addTo(map)
@@ -768,8 +990,33 @@ function App() {
   }
 
   return (
-    <main className="monitoring-page">
-      <section className="fleet-panel">
+    <>
+      {isPreloaderVisible ? (
+        <div className="preloader-screen" aria-live="polite" aria-label="Загрузка интерфейса">
+          <img className="preloader-logo" src="/logo.svg" alt="Логотип" />
+          <div className="preloader-loading-block">
+            <div className="preloader-track-wrap" aria-hidden="true">
+              <div className="preloader-taxi-lane">
+                <div className="preloader-taxi-rig">
+                  <PreloaderPixelTaxi />
+                </div>
+              </div>
+              <div className="preloader-track">
+                <span className="preloader-progress" />
+              </div>
+            </div>
+            <div className="preloader-powered">
+              <div className="preloader-powered-row">
+                <span className="preloader-powered-text">Powered by Cursor</span>
+                <img className="preloader-powered-mark" src="/cursor.svg" alt="" aria-hidden="true" />
+              </div>
+              <p className="preloader-created-by">Created by Gleb M.</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <main className="monitoring-page">
+        <section className="fleet-panel">
         <div className="chips">
           <button className={`chip ${activeFilter === 'all' ? 'active' : ''}`} onClick={() => setActiveFilter('all')}>
             Все
@@ -855,10 +1102,10 @@ function App() {
         <div className="fleet-shadow" />
       </section>
 
-      <section className="map-panel">
+      <section className={`map-panel${isGlobalLogExpanded ? ' map-panel--log-expanded' : ''}`}>
         <div className="map-main">
           <header className="map-header">
-            <img className="logo-mark" src="/logo.svg" alt="Логотип" />
+            <MapLogoMark />
             <div className="stats">
               <span className="stat-item">
                 <span className="stat-label">все</span>
@@ -875,10 +1122,6 @@ function App() {
               <span className="stat-item">
                 <span className="stat-label">на зарядке</span>
                 <span className="stat-value">6</span>
-              </span>
-              <span className="stat-item">
-                <span className="stat-label">ошибки</span>
-                <span className="stat-value">1</span>
               </span>
               <span className="stat-item">
                 <span className="stat-label">вне сервиса</span>
@@ -900,23 +1143,39 @@ function App() {
             </div>
           </div>
         </div>
-        <div className="map-footer">
+        <div className={`map-footer${isGlobalLogExpanded ? ' map-footer--expanded' : ''}`}>
           <div className="map-footer-head">
             <h2>Общее логирование</h2>
-            <span>центр мониторинга</span>
+            <button
+              type="button"
+              className="map-footer-expand"
+              aria-expanded={isGlobalLogExpanded}
+              aria-label={isGlobalLogExpanded ? 'Свернуть общее логирование' : 'Развернуть общее логирование'}
+              onClick={() => setIsGlobalLogExpanded((v) => !v)}
+            >
+              <img src="/expand.svg" alt="" aria-hidden="true" />
+            </button>
+          </div>
+          <div className="map-footer-log-head" aria-hidden="true">
+            <span>время</span>
+            <span>статус</span>
           </div>
           <div className="map-footer-list-wrap">
             <div className="map-footer-list" ref={globalLogListRef}>
-              {globalCarLogs.map((event) => (
-                <div className="map-footer-row" key={`${event.time}-${event.message}-${event.sourceCar}`}>
-                  <span>{event.time}</span>
-                  <span className={event.critical ? 'critical' : 'normal'}>
-                    {event.message}
+              {globalCarLogs.map((event, idx) => (
+                <div className="map-footer-row" key={`${idx}-${event.message}-${event.sourceCar}`}>
+                  <span>{formatLiveLogTime(idx, liveLogPulse)}</span>
+                  <div
+                    className="map-footer-status-wrap"
+                    onClick={() => handleCopyLogStatus(`${event.message} ${event.sourceCar}`)}
+                  >
+                    <span className={event.critical ? 'critical' : 'normal'}>{event.message}</span>
                     <em>
                       <button
                         type="button"
                         className="log-car-link"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation()
                           if (!event.sourceUid) return
                           setSelectedCarUid(event.sourceUid)
                         }}
@@ -924,7 +1183,7 @@ function App() {
                         {event.sourceCar}
                       </button>
                     </em>
-                  </span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -963,19 +1222,39 @@ function App() {
               </div>
               <div className="selected-car-row selected-status-row">
                 <div className="car-indicators">
-                  <span className={isIndicatorHot('engine') ? 'indicator-hot' : 'indicator-dim'}>
+                  <span
+                    className={`indicator-with-tip ${isIndicatorHot('engine') ? 'indicator-hot' : 'indicator-dim'}`}
+                    data-tooltip={indicatorLabels.engine}
+                    aria-label={indicatorLabels.engine}
+                  >
                     <EngineIcon />
                   </span>
-                  <span className={isIndicatorHot('battery') ? 'indicator-hot' : 'indicator-dim'}>
+                  <span
+                    className={`indicator-with-tip ${isIndicatorHot('battery') ? 'indicator-hot' : 'indicator-dim'}`}
+                    data-tooltip={indicatorLabels.battery}
+                    aria-label={indicatorLabels.battery}
+                  >
                     <BatteryIcon />
                   </span>
-                  <span className={isIndicatorHot('wheel') ? 'indicator-hot' : 'indicator-dim'}>
+                  <span
+                    className={`indicator-with-tip ${isIndicatorHot('wheel') ? 'indicator-hot' : 'indicator-dim'}`}
+                    data-tooltip={indicatorLabels.wheel}
+                    aria-label={indicatorLabels.wheel}
+                  >
                     <WheelIcon />
                   </span>
-                  <span className={isIndicatorHot('temperature') ? 'indicator-hot' : 'indicator-dim'}>
+                  <span
+                    className={`indicator-with-tip ${isIndicatorHot('temperature') ? 'indicator-hot' : 'indicator-dim'}`}
+                    data-tooltip={indicatorLabels.temperature}
+                    aria-label={indicatorLabels.temperature}
+                  >
                     <TemperatureIcon />
                   </span>
-                  <span className={isIndicatorHot('lidar') ? 'indicator-hot' : 'indicator-dim'}>
+                  <span
+                    className={`indicator-with-tip ${isIndicatorHot('lidar') ? 'indicator-hot' : 'indicator-dim'}`}
+                    data-tooltip={indicatorLabels.lidar}
+                    aria-label={indicatorLabels.lidar}
+                  >
                     <LidarIcon />
                   </span>
                 </div>
@@ -1024,18 +1303,29 @@ function App() {
             <span>статус</span>
           </div>
           <div className="log-list">
-            {(selectedCar?.logs ?? []).map((event) => (
-              <div className="log-row" key={`${event.time}-${event.message}`}>
-                <span>{event.time}</span>
-                <span className={`log-message ${event.critical ? 'critical' : 'normal'}`}>
-                  {event.message}
-                </span>
+            {(selectedCar?.logs ?? []).map((event, idx) => (
+              <div className="log-row" key={`${idx}-${event.message}`}>
+                <span>{formatLiveLogTime(idx, liveLogPulse)}</span>
+                <div
+                  className="log-status-copy-wrap"
+                  onClick={() => handleCopyLogStatus(event.message)}
+                >
+                  <span className={`log-message ${event.critical ? 'critical' : 'normal'}`}>
+                    {event.message}
+                  </span>
+                </div>
               </div>
             ))}
           </div>
         </article>
-      </section>
-    </main>
+        </section>
+      </main>
+      {statusCopyToastVisible ? (
+        <div className="copy-status-toast" role="status" aria-live="polite">
+          Статус скопирован
+        </div>
+      ) : null}
+    </>
   )
 }
 

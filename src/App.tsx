@@ -44,45 +44,46 @@ type Car = {
 
 const carBadgePrimarySrc = 'https://www.figma.com/api/mcp/asset/a86eaf06-1e91-45f8-8865-202791400a5b'
 const carBadgeSecondarySrc = '/img2.png'
+const carBadgeMoskvichSrc = '/img3.png'
 
 const fleet: Car[] = [
   {
-    id: 'E103KK 96',
+    id: 'Е103КК 96',
     model: 'Hyundai Sonata',
     charge: 62,
     status: 'В поездке',
     hasAlert: true,
     alertIndicators: ['temperature', 'lidar'],
   },
-  { id: 'C205EP 77', model: 'Hyundai Sonata', charge: 96, status: 'В поездке' },
-  { id: 'K989TB 96', model: 'Lada Granta', charge: 89, status: 'В поездке' },
-  { id: 'P941PM 96', model: 'Москвич GTR', charge: 6, status: 'Свободен' },
-  { id: 'H008OC 77', model: 'Lada Granta', charge: 59, status: 'На зарядке', chargingIcon: true },
-  { id: 'T321MK 77', model: 'Peugeot Boxer', charge: 41, status: 'На зарядке', chargingIcon: true },
+  { id: 'С205ЕР 77', model: 'Hyundai Sonata', charge: 96, status: 'В поездке' },
+  { id: 'К989ТВ 96', model: 'Москвич GTR', charge: 89, status: 'В поездке' },
+  { id: 'Р941РМ 96', model: 'Москвич GTR', charge: 6, status: 'Свободен' },
+  { id: 'Н008ОС 77', model: 'Lada Granta', charge: 59, status: 'На зарядке', chargingIcon: true },
+  { id: 'Т321МК 77', model: 'Peugeot Boxer', charge: 41, status: 'На зарядке', chargingIcon: true },
   {
-    id: 'E004PP 77',
+    id: 'Е004РР 77',
     model: 'Hyundai Sonata',
     charge: 0,
     status: 'Вне сервиса',
     hasAlert: true,
     alertIndicators: ['engine', 'battery', 'lidar'],
   },
-  { id: 'E089AM 77', model: 'Peugeot Boxer', charge: 0, status: 'Вне сервиса' },
-  { id: 'E103KK 96', model: 'Hyundai Sonata', charge: 100, status: 'Вне сервиса' },
-  { id: 'E103KK 96', model: 'Hyundai Sonata', charge: 100, status: 'Вне сервиса' },
+  { id: 'Е089АМ 77', model: 'Peugeot Boxer', charge: 0, status: 'Вне сервиса' },
+  { id: 'Е103КК 96', model: 'Hyundai Sonata', charge: 100, status: 'Вне сервиса' },
+  { id: 'Е103КК 96', model: 'Hyundai Sonata', charge: 100, status: 'Вне сервиса' },
 ]
 
 const extraFleet: Car[] = [
-  { id: 'A120BC 77', model: 'Hyundai Sonata', charge: 78, status: 'В поездке' },
-  { id: 'M450KT 78', model: 'Lada Granta', charge: 52, status: 'На зарядке', chargingIcon: true },
-  { id: 'X901OP 98', model: 'Peugeot Boxer', charge: 34, status: 'На зарядке', chargingIcon: true },
-  { id: 'Y313AA 97', model: 'Hyundai Sonata', charge: 87, status: 'В поездке' },
-  { id: 'T777TT 77', model: 'Москвич GTR', charge: 12, status: 'Свободен' },
-  { id: 'C100CC 78', model: 'Hyundai Sonata', charge: 64, status: 'В поездке' },
-  { id: 'P009PP 77', model: 'Lada Granta', charge: 26, status: 'Свободен' },
-  { id: 'B222BB 98', model: 'Peugeot Boxer', charge: 0, status: 'Вне сервиса' },
-  { id: 'H707HH 97', model: 'Hyundai Sonata', charge: 91, status: 'В поездке' },
-  { id: 'K404KK 78', model: 'Lada Granta', charge: 43, status: 'На зарядке', chargingIcon: true },
+  { id: 'А120ВС 77', model: 'Hyundai Sonata', charge: 78, status: 'В поездке' },
+  { id: 'М450КТ 78', model: 'Lada Granta', charge: 52, status: 'На зарядке', chargingIcon: true },
+  { id: 'Х901ОР 98', model: 'Peugeot Boxer', charge: 34, status: 'На зарядке', chargingIcon: true },
+  { id: 'У313АА 97', model: 'Москвич GTR', charge: 87, status: 'В поездке' },
+  { id: 'Т777ТТ 77', model: 'Москвич GTR', charge: 12, status: 'Свободен' },
+  { id: 'С100СС 78', model: 'Hyundai Sonata', charge: 64, status: 'В поездке' },
+  { id: 'Р009РР 77', model: 'Lada Granta', charge: 26, status: 'Свободен' },
+  { id: 'В222ВВ 98', model: 'Peugeot Boxer', charge: 0, status: 'Вне сервиса' },
+  { id: 'Н707НН 97', model: 'Hyundai Sonata', charge: 91, status: 'В поездке' },
+  { id: 'К404КК 78', model: 'Lada Granta', charge: 43, status: 'На зарядке', chargingIcon: true },
 ]
 
 const defaultIncidentTemplates: LogTemplate[] = [
@@ -95,23 +96,23 @@ const defaultIncidentTemplates: LogTemplate[] = [
 ]
 
 const logsByCarId: Record<string, LogTemplate[]> = {
-  'E103KK 96': [
+  'Е103КК 96': [
     { message: 'Ошибка системы охлаждения', critical: true, icon: '/engine.svg' },
     { message: 'Перегрузка на канале CAN-2', critical: true, icon: '/lidar.svg' },
     { message: 'Резкое торможение на Тверской', critical: false, icon: '/wheel.svg' },
     { message: 'Маршрут обновлен диспетчером', critical: false, icon: '/battery.svg' },
   ],
-  'P941PM 96': [
+  'Р941РМ 96': [
     { message: 'Ожидание следующего заказа', critical: false, icon: '/wheel.svg' },
     { message: 'Связь стабильна', critical: false, icon: '/lidar.svg' },
     { message: 'Переход в режим свободен', critical: false, icon: '/battery.svg' },
   ],
-  'H008OC 77': [
+  'Н008ОС 77': [
     { message: 'Подключено к зарядной станции #3', critical: false, icon: '/battery-charge-28-regular.svg' },
     { message: 'Оценка времени заряда: 22 мин', critical: false, icon: '/battery.svg' },
     { message: 'Скорость заряда: 120 кВт', critical: false, icon: '/engine.svg' },
   ],
-  'E004PP 77': [
+  'Е004РР 77': [
     { message: 'Авто выведено из сервиса', critical: true, icon: '/warning-line.svg' },
     { message: 'Потеря связи с модулем lidar', critical: true, icon: '/lidar.svg' },
     { message: 'Требуется осмотр инженера', critical: true, icon: '/engine.svg' },
@@ -142,6 +143,7 @@ const getStatusColor = (car: Car) =>
 
 const getCarBadgeSrc = (car: Car | null) => {
   if (!car?.uid) return carBadgePrimarySrc
+  if (car.model === 'Москвич GTR') return carBadgeMoskvichSrc
   const idx = Number(car.uid.split('-').pop())
   if (!Number.isFinite(idx)) return carBadgePrimarySrc
   return idx % 2 === 0 ? carBadgePrimarySrc : carBadgeSecondarySrc
@@ -220,7 +222,7 @@ const globalLogTemplates: Array<{ message: string; critical: boolean; icon: stri
 
 function BatteryDots({ charge }: { charge: number }) {
   const active = Math.round(charge / 20)
-  const activeColor = charge < 20 ? '#ff0000' : charge <= 60 ? '#ff8a00' : '#6c9f72'
+  const activeColor = charge <= 20 ? '#ff0000' : charge >= 40 && charge <= 59 ? '#ff8a00' : charge >= 60 ? '#6c9f72' : '#ff0000'
   return (
     <div className="battery-dots" aria-label={`Заряд: ${charge}%`}>
       {Array.from({ length: 5 }).map((_, idx) => (
@@ -646,10 +648,10 @@ function App() {
   const selectedCar = useMemo(() => allFleet.find((car) => car.uid === selectedCarUid) ?? null, [allFleet, selectedCarUid])
   const globalCarLogs = useMemo(() => {
     const now = new Date()
-    const tripCars = filteredFleet.filter((car) => car.status === 'В поездке').slice(0, 7)
-    const freeCars = filteredFleet.filter((car) => car.status === 'Свободен').slice(0, 4)
-    const chargingCars = filteredFleet.filter((car) => car.status === 'На зарядке').slice(0, 4)
-    const outCars = filteredFleet.filter((car) => car.status === 'Вне сервиса').slice(0, 4)
+    const tripCars = allFleet.filter((car) => car.status === 'В поездке').slice(0, 7)
+    const freeCars = allFleet.filter((car) => car.status === 'Свободен').slice(0, 4)
+    const chargingCars = allFleet.filter((car) => car.status === 'На зарядке').slice(0, 4)
+    const outCars = allFleet.filter((car) => car.status === 'Вне сервиса').slice(0, 4)
     const mapCars = [...tripCars, ...freeCars, ...chargingCars, ...outCars]
     const fallbackCars = mapCars.length > 0 ? mapCars : allFleet
     const alertMapCars = mapCars.filter((car) => car.hasAlert)
@@ -676,7 +678,7 @@ function App() {
         sourceUid: car.uid ?? null,
       }
     })
-  }, [allFleet, filteredFleet, logTick])
+  }, [allFleet, logTick])
 
   useEffect(() => {
     setSelectedCarUid(null)
@@ -774,6 +776,17 @@ function App() {
     map.createPane('routePane')
     const routePane = map.getPane('routePane')
     if (routePane) routePane.style.zIndex = '300'
+    if (window.matchMedia('(max-width: 1200px)').matches) {
+      map.dragging.disable()
+      map.touchZoom.disable()
+      map.doubleClickZoom.disable()
+      map.scrollWheelZoom.disable()
+      map.boxZoom.disable()
+      map.keyboard.disable()
+      if ((map as unknown as { tap?: { disable: () => void } }).tap) {
+        ;(map as unknown as { tap?: { disable: () => void } }).tap?.disable()
+      }
+    }
 
     map.on('click', () => {
       setIsMapSearchOpen(false)

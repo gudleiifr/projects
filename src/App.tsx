@@ -539,6 +539,7 @@ function App() {
   const [isPreloaderVisible, setIsPreloaderVisible] = useState(true)
   const [isGlobalLogExpanded, setIsGlobalLogExpanded] = useState(false)
   const [isMapSearchOpen, setIsMapSearchOpen] = useState(false)
+  const [isFinishTripConfirmOpen, setIsFinishTripConfirmOpen] = useState(false)
   const mapSearchInputRef = useRef<HTMLInputElement | null>(null)
   const [statusCopyToastVisible, setStatusCopyToastVisible] = useState(false)
   const statusCopyToastTimerRef = useRef<number | null>(null)
@@ -1117,6 +1118,15 @@ function App() {
   }, [isMapSearchOpen])
 
   useEffect(() => {
+    if (!isFinishTripConfirmOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsFinishTripConfirmOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isFinishTripConfirmOpen])
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       setIsMapSearchOpen(false)
@@ -1600,17 +1610,24 @@ function App() {
                 <span>На зарядку</span>
               </button>
               <button type="button" className="action-chip" disabled={isSelectedCarOutOfService}>
-                <span>Обновить телеметрию</span>
+                <img src="/sync.svg" alt="" aria-hidden="true" className="action-chip-icon" />
+                <span>Синхронизация</span>
               </button>
               <button type="button" className="action-chip" disabled={isSelectedCarOutOfService}>
                 <img src="/lidar.svg" alt="" aria-hidden="true" className="action-chip-icon" />
                 <span>Просмотр камер</span>
               </button>
               <button type="button" className="action-chip" disabled={isSelectedCarOutOfService}>
-                <span>В техподдержку</span>
+                <img src="/fix.svg" alt="" aria-hidden="true" className="action-chip-icon" />
+                <span>В сервис</span>
               </button>
             </div>
-            <button type="button" className="action-chip action-chip--ghost" disabled={!canFinishTrip}>
+            <button
+              type="button"
+              className="action-chip action-chip--ghost"
+              disabled={!canFinishTrip}
+              onClick={() => setIsFinishTripConfirmOpen(true)}
+            >
               <span>Завершить поездку</span>
             </button>
             </>
@@ -1654,6 +1671,103 @@ function App() {
       {statusCopyToastVisible ? (
         <div className="copy-status-toast" role="status" aria-live="polite">
           Статус скопирован
+        </div>
+      ) : null}
+      {isFinishTripConfirmOpen && selectedCar ? (
+        <div
+          className="finish-trip-modal-overlay"
+          role="presentation"
+          onClick={() => setIsFinishTripConfirmOpen(false)}
+        >
+          <div
+            className="finish-trip-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="finish-trip-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="finish-trip-modal-title">Принудительная остановка</h2>
+            <article className="selected-car finish-trip-modal-selected-car">
+              <div className="selected-car-top">
+                <div className="selected-car-left">
+                  <img className="car-badge" src={getCarBadgeSrc(selectedCar)} alt="" />
+                  <span className="charge">{`${selectedCar.status === 'Вне сервиса' ? 0 : selectedCar.charge}%`}</span>
+                  <BatteryDots charge={selectedCar.status === 'Вне сервиса' ? 0 : selectedCar.charge} />
+                </div>
+                <div className="selected-car-right">
+                  <div className="selected-car-row">
+                    <span className="car-name">{selectedCar.model}</span>
+                    <span className="car-id">{selectedCar.id}</span>
+                  </div>
+                  <div className="selected-car-row selected-status-row">
+                    <span className="status" style={{ color: getStatusColor(selectedCar) }}>
+                      {selectedCar.status}
+                    </span>
+                  </div>
+                  <div className="selected-car-row selected-status-row">
+                    <div className="car-indicators">
+                      <span
+                        className={`indicator-with-tip ${isIndicatorHot('engine') ? 'indicator-hot' : 'indicator-dim'}`}
+                        data-tooltip={indicatorLabels.engine}
+                        aria-label={indicatorLabels.engine}
+                      >
+                        <EngineIcon />
+                      </span>
+                      <span
+                        className={`indicator-with-tip ${isIndicatorHot('battery') ? 'indicator-hot' : 'indicator-dim'}`}
+                        data-tooltip={indicatorLabels.battery}
+                        aria-label={indicatorLabels.battery}
+                      >
+                        <BatteryIcon />
+                      </span>
+                      <span
+                        className={`indicator-with-tip ${isIndicatorHot('wheel') ? 'indicator-hot' : 'indicator-dim'}`}
+                        data-tooltip={indicatorLabels.wheel}
+                        aria-label={indicatorLabels.wheel}
+                      >
+                        <WheelIcon />
+                      </span>
+                      <span
+                        className={`indicator-with-tip ${isIndicatorHot('temperature') ? 'indicator-hot' : 'indicator-dim'}`}
+                        data-tooltip={indicatorLabels.temperature}
+                        aria-label={indicatorLabels.temperature}
+                      >
+                        <TemperatureIcon />
+                      </span>
+                      <span
+                        className={`indicator-with-tip ${isIndicatorHot('lidar') ? 'indicator-hot' : 'indicator-dim'}`}
+                        data-tooltip={indicatorLabels.lidar}
+                        aria-label={indicatorLabels.lidar}
+                      >
+                        <LidarIcon />
+                      </span>
+                    </div>
+                    {selectedCar.hasAlert ? <img className="warning-main" src="/warning-line.svg" alt="" aria-hidden="true" /> : null}
+                  </div>
+                </div>
+              </div>
+            </article>
+            <p>
+              Автомобиль сейчас находится в поездке. При подтверждении он остановится в ближайшем разрешенном для
+              остановки месте, а пассажир получит звуковое уведомление о принудительной остановке.
+            </p>
+            <div className="finish-trip-modal-actions">
+              <button
+                type="button"
+                className="finish-trip-modal-cancel"
+                onClick={() => setIsFinishTripConfirmOpen(false)}
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                className="finish-trip-modal-confirm"
+                onClick={() => setIsFinishTripConfirmOpen(false)}
+              >
+                Завершить поездку
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </>

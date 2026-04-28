@@ -1,5 +1,5 @@
 import './style.css'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import L, { type Map as LeafletMap } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
@@ -9,6 +9,26 @@ type Incident = { time: string; message: string; critical: boolean; icon: string
 type LogTemplate = Omit<Incident, 'time'>
 type TripState = { routeIndex: number; segmentIndex: number; segmentProgress: number; speed: number }
 type CarIndicatorKey = 'engine' | 'battery' | 'wheel' | 'temperature' | 'lidar'
+
+type NominatimHit = { lat: string; lon: string; display_name: string }
+
+async function searchAddressNominatim(query: string, signal: AbortSignal): Promise<NominatimHit[]> {
+  const q = query.trim()
+  if (q.length < 3) return []
+  const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=6&addressdetails=0&countrycodes=ru`
+  const res = await fetch(url, { signal, headers: { Accept: 'application/json' } })
+  if (!res.ok) return []
+  const raw = (await res.json()) as unknown
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((row) => row as Record<string, unknown>)
+    .filter((row) => row.display_name != null && row.lat != null && row.lon != null)
+    .map((row) => ({
+      lat: String(row.lat),
+      lon: String(row.lon),
+      display_name: String(row.display_name),
+    }))
+}
 
 type Car = {
   uid?: string
@@ -21,6 +41,9 @@ type Car = {
   logs?: Incident[]
   alertIndicators?: CarIndicatorKey[]
 }
+
+const carBadgePrimarySrc = 'https://www.figma.com/api/mcp/asset/a86eaf06-1e91-45f8-8865-202791400a5b'
+const carBadgeSecondarySrc = '/img2.png'
 
 const fleet: Car[] = [
   {
@@ -116,6 +139,13 @@ const statusColor: Record<CarStatus, string> = {
 
 const getStatusColor = (car: Car) =>
   car.status === 'В поездке' && car.hasAlert ? '#ff0000' : statusColor[car.status]
+
+const getCarBadgeSrc = (car: Car | null) => {
+  if (!car?.uid) return carBadgePrimarySrc
+  const idx = Number(car.uid.split('-').pop())
+  if (!Number.isFinite(idx)) return carBadgePrimarySrc
+  return idx % 2 === 0 ? carBadgePrimarySrc : carBadgeSecondarySrc
+}
 
 function formatLogClock(d: Date) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -216,7 +246,6 @@ function PreloaderPixelTaxi() {
       <rect x="2" y="4" width="17" height="4" fill="#ffdd2d" />
       <rect x="4" y="2" width="11" height="3" fill="#ffdd2d" />
       <rect x="5" y="1" width="9" height="2" fill="#ffdd2d" />
-      <rect x="6" y="0" width="7" height="1" fill="#ffdd2d" />
       <rect x="17" y="5" width="5" height="3" fill="#e6c628" />
       <rect x="5" y="3" width="4" height="2" fill="#2d4a6f" />
       <rect x="10" y="3" width="4" height="2" fill="#2d4a6f" />
@@ -301,6 +330,27 @@ const ROAD_ROUTES: [number, number][][] = [
   [[55.7646, 37.6179], [55.7626, 37.6239], [55.7604, 37.6298], [55.7581, 37.6359]],
   [[55.7507, 37.6064], [55.7498, 37.6126], [55.7488, 37.6186], [55.7479, 37.6249]],
 ]
+
+const ROUTE_DESTINATION_ADDRESSES = [
+  'Москва, Пресненская наб., 8с1',
+  'Москва, ул. Новый Арбат, 15',
+  'Москва, Ходынский бул., 4',
+  'Москва, ул. Лесная, 20с3',
+  'Москва, ул. Большая Якиманка, 22',
+  'Москва, Цветной б-р, 30с1',
+  'Москва, ул. Покровка, 47',
+] as const
+
+function formatTripEtaByState(route: [number, number][], state: TripState) {
+  const segmentCount = Math.max(1, route.length - 1)
+  const clampedIdx = Math.max(0, Math.min(segmentCount - 1, state.segmentIndex))
+  const clampedProgress = Math.max(0, Math.min(1, state.segmentProgress))
+  const remainingSegments = (1 - clampedProgress) + Math.max(0, segmentCount - 1 - clampedIdx)
+  const ticks = remainingSegments / Math.max(0.0001, state.speed)
+  const remainingSeconds = Math.max(10, Math.round((ticks * 260) / 1000))
+  const etaMinutes = Math.max(1, Math.round(remainingSeconds / 60))
+  return `~ ${etaMinutes} мин до конца поездки`
+}
 
 const hashUid = (uid: string) => uid.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)
 const normalizedHash = (uid: string) => (hashUid(uid) % 997) / 997
@@ -421,13 +471,14 @@ function MapLogoMark() {
 function App() {
   const fleetListRef = useRef<HTMLDivElement | null>(null)
   const globalLogListRef = useRef<HTMLDivElement | null>(null)
+  const logListRef = useRef<HTMLDivElement | null>(null)
   const mapElementRef = useRef<HTMLDivElement | null>(null)
   const leafletMapRef = useRef<LeafletMap | null>(null)
   const movingMarkersRef = useRef<Array<{ uid: string; marker: L.CircleMarker }>>([])
   const carMarkersRef = useRef<Record<string, L.CircleMarker | L.Marker>>({})
   const tripStatesRef = useRef<Record<string, TripState>>({})
   const activeTripRouteRef = useRef<L.Polyline | null>(null)
-  const activeDestinationRef = useRef<L.CircleMarker | null>(null)
+  const activeDestinationRef = useRef<L.Layer | null>(null)
   const mapLayersRef = useRef<L.Layer[]>([])
   const mapAnimationRef = useRef<number | null>(null)
   const dragStateRef = useRef<{ kind: 'fleet' | 'global' | null; startY: number; startScrollTop: number }>({
@@ -475,9 +526,15 @@ function App() {
   }, [logTick])
   const [activeFilter, setActiveFilter] = useState<FleetFilter>('all')
   const [selectedCarUid, setSelectedCarUid] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
+  const [fleetSearchQuery, setFleetSearchQuery] = useState('')
+  const [mapSearchQuery, setMapSearchQuery] = useState('')
+  const [mapGeocodeHits, setMapGeocodeHits] = useState<NominatimHit[]>([])
+  const [mapGeocodeLoading, setMapGeocodeLoading] = useState(false)
+  const addressMarkerRef = useRef<L.CircleMarker | null>(null)
   const [isPreloaderVisible, setIsPreloaderVisible] = useState(true)
   const [isGlobalLogExpanded, setIsGlobalLogExpanded] = useState(false)
+  const [isMapSearchOpen, setIsMapSearchOpen] = useState(false)
+  const mapSearchInputRef = useRef<HTMLInputElement | null>(null)
   const [statusCopyToastVisible, setStatusCopyToastVisible] = useState(false)
   const statusCopyToastTimerRef = useRef<number | null>(null)
 
@@ -547,7 +604,7 @@ function App() {
 
   const alertCount = useMemo(() => allFleet.filter((car) => car.hasAlert).length, [allFleet])
   const filteredFleet = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase()
+    const normalizedQuery = fleetSearchQuery.trim().toLowerCase()
     const base = allFleet.filter((car) => {
       if (activeFilter === 'alerts') return Boolean(car.hasAlert)
       const matchesStatus =
@@ -584,25 +641,42 @@ function App() {
         return a.idx - b.idx
       })
       .map(({ car }) => car)
-  }, [activeFilter, allFleet, searchQuery])
+  }, [activeFilter, allFleet, fleetSearchQuery])
 
   const selectedCar = useMemo(() => allFleet.find((car) => car.uid === selectedCarUid) ?? null, [allFleet, selectedCarUid])
   const globalCarLogs = useMemo(() => {
     const now = new Date()
-    const shuffled = shuffleLogTemplates(globalLogTemplates)
-    return shuffled.map((template, idx) => {
-      const car = allFleet[idx % allFleet.length]
+    const tripCars = filteredFleet.filter((car) => car.status === 'В поездке').slice(0, 7)
+    const freeCars = filteredFleet.filter((car) => car.status === 'Свободен').slice(0, 4)
+    const chargingCars = filteredFleet.filter((car) => car.status === 'На зарядке').slice(0, 4)
+    const outCars = filteredFleet.filter((car) => car.status === 'Вне сервиса').slice(0, 4)
+    const mapCars = [...tripCars, ...freeCars, ...chargingCars, ...outCars]
+    const fallbackCars = mapCars.length > 0 ? mapCars : allFleet
+    const alertMapCars = mapCars.filter((car) => car.hasAlert)
+    const templates = shuffleLogTemplates(
+      alertMapCars.length > 0 ? globalLogTemplates : globalLogTemplates.filter((row) => !row.critical),
+    )
+    let alertIdx = 0
+    let regularIdx = 0
+
+    return templates.map((template, idx) => {
+      const isCritical = template.critical && alertMapCars.length > 0
+      const car = isCritical
+        ? alertMapCars[alertIdx++ % alertMapCars.length]
+        : fallbackCars[regularIdx++ % fallbackCars.length]
       const d = new Date(now.getTime())
       d.setMinutes(d.getMinutes() - idx)
       const time = formatLogClock(d)
       return {
         ...template,
+        critical: isCritical,
         time,
-        sourceCar: `${car.model} • ${car.id}`,
+        sourceModel: car.model,
+        sourceId: car.id,
         sourceUid: car.uid ?? null,
       }
     })
-  }, [allFleet, logTick])
+  }, [allFleet, filteredFleet, logTick])
 
   useEffect(() => {
     setSelectedCarUid(null)
@@ -625,6 +699,27 @@ function App() {
       activeDestinationRef.current = null
     }
   }, [selectedCarUid])
+
+  useEffect(() => {
+    const selectedUid = selectedCarUid
+    const isAnySelected = Boolean(selectedUid)
+
+    Object.entries(carMarkersRef.current).forEach(([uid, marker]) => {
+      const isSelected = selectedUid === uid
+      const alpha = !isAnySelected || isSelected ? 1 : 0.3
+      const markerCar = allFleet.find((car) => car.uid === uid)
+
+      if (marker instanceof L.CircleMarker) {
+        const baseFillOpacity = markerCar?.status === 'Вне сервиса' ? 0.3 : 0.9
+        marker.setStyle({
+          opacity: alpha,
+          fillOpacity: baseFillOpacity * alpha,
+        })
+      } else {
+        marker.setOpacity(alpha)
+      }
+    })
+  }, [allFleet, selectedCarUid])
 
   useEffect(() => {
     const node = fleetListRef.current
@@ -676,8 +771,18 @@ function App() {
       zoomControl: false,
       attributionControl: false,
     }).setView(defaultCenter, defaultZoom)
+    map.createPane('routePane')
+    const routePane = map.getPane('routePane')
+    if (routePane) routePane.style.zIndex = '300'
 
     map.on('click', () => {
+      setIsMapSearchOpen(false)
+      setMapGeocodeHits([])
+      setMapGeocodeLoading(false)
+      if (addressMarkerRef.current) {
+        addressMarkerRef.current.remove()
+        addressMarkerRef.current = null
+      }
       setSelectedCarUid(null)
       if (activeTripRouteRef.current) {
         activeTripRouteRef.current.remove()
@@ -697,6 +802,10 @@ function App() {
     leafletMapRef.current = map
 
     return () => {
+      if (addressMarkerRef.current) {
+        addressMarkerRef.current.remove()
+        addressMarkerRef.current = null
+      }
       if (mapAnimationRef.current !== null) {
         window.clearInterval(mapAnimationRef.current)
         mapAnimationRef.current = null
@@ -777,26 +886,29 @@ function App() {
         if (!currentState) return
         const route = ROAD_ROUTES[currentState.routeIndex]
         const destination = route[route.length - 1]
+        const destinationAddress = ROUTE_DESTINATION_ADDRESSES[currentState.routeIndex % ROUTE_DESTINATION_ADDRESSES.length]
+        const destinationEta = formatTripEtaByState(route, currentState)
 
         if (activeTripRouteRef.current) activeTripRouteRef.current.remove()
         if (activeDestinationRef.current) activeDestinationRef.current.remove()
 
         activeTripRouteRef.current = L.polyline(route, {
-          color: car.hasAlert ? '#ff0000' : '#4ca9ff',
-          weight: 4,
+          pane: 'routePane',
+          color: '#ffffff',
+          weight: 2,
           opacity: 0.85,
         }).addTo(map)
 
-        activeDestinationRef.current = L.circleMarker(destination, {
-          radius: 8,
-          color: '#ffffff',
-          fillColor: '#ffffff',
-          fillOpacity: 0.9,
-          weight: 2,
+        activeDestinationRef.current = L.marker(destination, {
+          icon: L.icon({
+            iconUrl: '/destination.svg',
+            iconSize: [22, 22],
+            iconAnchor: [11, 22],
+          }),
         })
-          .bindTooltip('Точка назначения', {
+          .bindTooltip(`${destinationAddress}<br/>${destinationEta}`, {
             direction: 'top',
-            offset: [0, -8],
+            offset: [0, -24],
             opacity: 1,
             className: 'map-tooltip-dark',
           })
@@ -975,9 +1087,113 @@ function App() {
     window.addEventListener('mouseup', stopDrag)
   }
 
+  useEffect(() => {
+    if (!isMapSearchOpen) return
+    const id = window.requestAnimationFrame(() => {
+      mapSearchInputRef.current?.focus()
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [isMapSearchOpen])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setIsMapSearchOpen(false)
+      setMapGeocodeHits([])
+      setMapGeocodeLoading(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  useEffect(() => {
+    if (!isMapSearchOpen) {
+      setMapGeocodeHits([])
+      setMapGeocodeLoading(false)
+    }
+  }, [isMapSearchOpen])
+
+  useEffect(() => {
+    if (!isMapSearchOpen) return
+    const q = mapSearchQuery.trim()
+    if (q.length < 3) {
+      setMapGeocodeHits([])
+      setMapGeocodeLoading(false)
+      return
+    }
+    const ac = new AbortController()
+    setMapGeocodeLoading(true)
+    const timer = window.setTimeout(() => {
+      void searchAddressNominatim(q, ac.signal)
+        .then((hits) => {
+          if (!ac.signal.aborted) setMapGeocodeHits(hits)
+        })
+        .catch(() => {
+          if (!ac.signal.aborted) setMapGeocodeHits([])
+        })
+        .finally(() => {
+          if (!ac.signal.aborted) setMapGeocodeLoading(false)
+        })
+    }, 500)
+    return () => {
+      window.clearTimeout(timer)
+      ac.abort()
+    }
+  }, [mapSearchQuery, isMapSearchOpen])
+
+  const applyWheelToList = useCallback((node: HTMLDivElement | null, event: React.WheelEvent) => {
+    if (!node) return
+    const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight)
+    if (maxScroll <= 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    node.scrollTop = Math.max(0, Math.min(maxScroll, node.scrollTop + event.deltaY))
+  }, [])
+
   const handleZoomIn = () => leafletMapRef.current?.zoomIn()
   const handleZoomOut = () => leafletMapRef.current?.zoomOut()
-  const handleResetView = () => leafletMapRef.current?.setView([55.7558, 37.6176], 13)
+
+  const flyToGeocodeHit = useCallback((hit: NominatimHit) => {
+    const map = leafletMapRef.current
+    if (!map) return
+    const lat = parseFloat(hit.lat)
+    const lng = parseFloat(hit.lon)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+    if (addressMarkerRef.current) {
+      addressMarkerRef.current.remove()
+      addressMarkerRef.current = null
+    }
+    const marker = L.circleMarker([lat, lng], {
+      radius: 7,
+      color: '#ffdd2d',
+      fillColor: '#ffdd2d',
+      fillOpacity: 0.88,
+      weight: 2,
+    })
+      .bindTooltip(hit.display_name, { direction: 'top', offset: [0, -8], opacity: 1, className: 'map-tooltip-dark' })
+      .addTo(map)
+    addressMarkerRef.current = marker
+    map.flyTo([lat, lng], 16, { duration: 0.55 })
+    setMapGeocodeHits([])
+    setMapGeocodeLoading(false)
+    setIsMapSearchOpen(false)
+  }, [])
+
+  const handleMapSearchKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== 'Enter') return
+      event.preventDefault()
+      const q = mapSearchQuery.trim()
+      if (q.length < 3) return
+      const ac = new AbortController()
+      void searchAddressNominatim(q, ac.signal)
+        .then((hits) => {
+          if (hits[0]) flyToGeocodeHit(hits[0])
+        })
+        .catch(() => {})
+    },
+    [mapSearchQuery, flyToGeocodeHit],
+  )
   const handleFocusCar = (uid: string | null) => {
     if (!uid) return
     const map = leafletMapRef.current
@@ -988,6 +1204,9 @@ function App() {
   const handleFocusSelectedCar = () => {
     handleFocusCar(selectedCarUid)
   }
+  const isSelectedCarOutOfService = selectedCar?.status === 'Вне сервиса'
+  const isSelectedCarCharging = selectedCar?.status === 'На зарядке'
+  const canFinishTrip = selectedCar?.status === 'В поездке'
 
   return (
     <>
@@ -1017,7 +1236,7 @@ function App() {
       ) : null}
       <main className="monitoring-page">
         <section className="fleet-panel">
-        <div className="chips">
+        <div className="chips" onWheel={(event) => applyWheelToList(fleetListRef.current, event)}>
           <button className={`chip ${activeFilter === 'all' ? 'active' : ''}`} onClick={() => setActiveFilter('all')}>
             Все
           </button>
@@ -1043,11 +1262,11 @@ function App() {
             <img src="/warning-line.svg" alt="" aria-hidden="true" />
           </button>
         </div>
-        <div className="search-box">
+        <div className="search-box" onWheel={(event) => applyWheelToList(fleetListRef.current, event)}>
           <input
             type="text"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
+            value={fleetSearchQuery}
+            onChange={(event) => setFleetSearchQuery(event.target.value)}
             placeholder="Поиск по номеру автомобиля"
             aria-label="Поиск по автомобилю"
           />
@@ -1091,7 +1310,7 @@ function App() {
             })}
             {filteredFleet.length === 0 ? <p className="fleet-empty">Нет машин по выбранному фильтру</p> : null}
           </div>
-          <div className="fleet-scrollbar">
+          <div className="fleet-scrollbar" onWheel={(event) => applyWheelToList(fleetListRef.current, event)}>
             <span
               className="fleet-scroll-thumb"
               style={{ height: `${thumbHeight}px`, transform: `translateY(${thumbOffset}px)` }}
@@ -1131,21 +1350,83 @@ function App() {
           </header>
           <div className="map-canvas">
             <div className="map-live" ref={mapElementRef} />
-            <div className="map-controls">
-              <button onClick={handleZoomOut}>-</button>
-              <button onClick={handleZoomIn}>+</button>
-              <button>
+            {isMapSearchOpen && (mapGeocodeLoading || mapGeocodeHits.length > 0) ? (
+              <div
+                className="map-geocode-panel"
+                role="listbox"
+                aria-label="Адреса"
+                onClick={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                {mapGeocodeLoading ? <div className="map-geocode-status">Поиск адреса…</div> : null}
+                {!mapGeocodeLoading &&
+                  mapGeocodeHits.map((hit, idx) => (
+                    <button
+                      key={`${hit.lat},${hit.lon},${idx}`}
+                      type="button"
+                      role="option"
+                      className="map-geocode-item"
+                      onClick={() => flyToGeocodeHit(hit)}
+                    >
+                      {hit.display_name}
+                    </button>
+                  ))}
+              </div>
+            ) : null}
+            <div
+              className="map-controls"
+              onClick={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <button type="button" onClick={handleZoomOut} aria-label="Уменьшить масштаб">
+                -
+              </button>
+              <button type="button" onClick={handleZoomIn} aria-label="Увеличить масштаб">
+                +
+              </button>
+              <button type="button" aria-label="Слои карты">
                 <img src="/material-symbols_layers-rounded.svg" alt="" aria-hidden="true" />
               </button>
-              <button onClick={handleResetView}>
-                <img src="/uil_search.svg" alt="" aria-hidden="true" />
-              </button>
+              <div className="map-controls-search-wrap">
+                <div className={`map-controls-search${isMapSearchOpen ? ' map-controls-search--open' : ''}`}>
+                  <input
+                    id="map-panel-search"
+                    ref={mapSearchInputRef}
+                    type="text"
+                    value={mapSearchQuery}
+                    onChange={(event) => setMapSearchQuery(event.target.value)}
+                    placeholder="Номер авто или адрес"
+                    aria-label="Поиск по номеру авто или адресу"
+                    autoComplete="street-address"
+                    onClick={(event) => event.stopPropagation()}
+                    onWheel={(event) => event.stopPropagation()}
+                    onKeyDown={handleMapSearchKeyDown}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className={isMapSearchOpen ? 'map-controls-search-toggle map-controls-search-toggle--active' : 'map-controls-search-toggle'}
+                  aria-expanded={isMapSearchOpen}
+                  aria-controls="map-panel-search"
+                  aria-label={isMapSearchOpen ? 'Закрыть поиск' : 'Поиск по номеру авто или адресу'}
+                  onClick={() => setIsMapSearchOpen((open) => !open)}
+                >
+                  <img src="/uil_search.svg" alt="" aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
         <div className={`map-footer${isGlobalLogExpanded ? ' map-footer--expanded' : ''}`}>
-          <div className="map-footer-head">
-            <h2>Общее логирование</h2>
+          <div
+            className="map-footer-head"
+            onWheel={(event) => {
+              if ((event.target as HTMLElement).closest('button')) return
+              applyWheelToList(globalLogListRef.current, event)
+            }}
+          >
+            <span>время</span>
+            <span>статус</span>
             <button
               type="button"
               className="map-footer-expand"
@@ -1156,38 +1437,48 @@ function App() {
               <img src="/expand.svg" alt="" aria-hidden="true" />
             </button>
           </div>
-          <div className="map-footer-log-head" aria-hidden="true">
-            <span>время</span>
-            <span>статус</span>
-          </div>
           <div className="map-footer-list-wrap">
             <div className="map-footer-list" ref={globalLogListRef}>
               {globalCarLogs.map((event, idx) => (
-                <div className="map-footer-row" key={`${idx}-${event.message}-${event.sourceCar}`}>
-                  <span>{formatLiveLogTime(idx, liveLogPulse)}</span>
-                  <div
+                <div className="map-footer-row" key={`${idx}-${event.message}-${event.sourceId}`}>
+                  <span className="map-footer-time">{formatLiveLogTime(idx, liveLogPulse)}</span>
+                  <span
                     className="map-footer-status-wrap"
-                    onClick={() => handleCopyLogStatus(`${event.message} ${event.sourceCar}`)}
+                    onClick={() => handleCopyLogStatus(`${event.message} ${event.sourceModel} ${event.sourceId}`)}
                   >
                     <span className={event.critical ? 'critical' : 'normal'}>{event.message}</span>
-                    <em>
-                      <button
-                        type="button"
-                        className="log-car-link"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          if (!event.sourceUid) return
-                          setSelectedCarUid(event.sourceUid)
-                        }}
-                      >
-                        {event.sourceCar}
-                      </button>
-                    </em>
-                  </div>
+                  </span>
+                  <span className="map-footer-car-wrap">
+                    <button
+                      type="button"
+                      className="log-car-link map-footer-model"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!event.sourceUid) return
+                        setSelectedCarUid(event.sourceUid)
+                      }}
+                    >
+                      {event.sourceModel}
+                    </button>
+                    <button
+                      type="button"
+                      className="log-car-link map-footer-id"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!event.sourceUid) return
+                        setSelectedCarUid(event.sourceUid)
+                      }}
+                    >
+                      {event.sourceId}
+                    </button>
+                  </span>
                 </div>
               ))}
             </div>
-            <div className="fleet-scrollbar global-scrollbar">
+            <div
+              className="fleet-scrollbar global-scrollbar"
+              onWheel={(event) => applyWheelToList(globalLogListRef.current, event)}
+            >
               <span
                 className="fleet-scroll-thumb"
                 style={{ height: `${globalThumbHeight}px`, transform: `translateY(${globalThumbOffset}px)` }}
@@ -1202,7 +1493,7 @@ function App() {
         <article className="selected-car">
           <div className="selected-car-top">
             <div className="selected-car-left">
-              <img className="car-badge" src="https://www.figma.com/api/mcp/asset/a86eaf06-1e91-45f8-8865-202791400a5b" alt="" />
+              <img className="car-badge" src={getCarBadgeSrc(selectedCar)} alt="" />
               <span className="charge">{selectedCar ? `${selectedCar.status === 'Вне сервиса' ? 0 : selectedCar.charge}%` : '0%'}</span>
               <BatteryDots charge={selectedCar ? (selectedCar.status === 'Вне сервиса' ? 0 : selectedCar.charge) : 0} />
             </div>
@@ -1266,43 +1557,50 @@ function App() {
         <article className="operator-actions">
           {selectedCar ? (
             <>
-            <h2>Действия оператора</h2>
             <div className="actions-grid">
-              <button type="button" className="action-btn primary">
-                Безопасная остановка
+              <button
+                type="button"
+                className="action-chip action-chip--charge"
+                disabled={isSelectedCarOutOfService || isSelectedCarCharging}
+              >
+                <img src="/battery-charge-28-regular.svg" alt="" aria-hidden="true" className="action-chip-icon" />
+                <span>На зарядку</span>
               </button>
-              <button type="button" className="action-btn">
-                Связь с пассажиром
+              <button type="button" className="action-chip" disabled={isSelectedCarOutOfService}>
+                <span>Обновить телеметрию</span>
               </button>
-              <button type="button" className="action-btn">
-                Переназначить маршрут
+              <button type="button" className="action-chip" disabled={isSelectedCarOutOfService}>
+                <img src="/lidar.svg" alt="" aria-hidden="true" className="action-chip-icon" />
+                <span>Просмотр камер</span>
               </button>
-              <button type="button" className="action-btn">
-                Отправить инженера
-              </button>
-              <button type="button" className="action-btn warning">
-                Снизить скорость
-              </button>
-              <button type="button" className="action-btn danger">
-                Вывести из сервиса
+              <button type="button" className="action-chip" disabled={isSelectedCarOutOfService}>
+                <span>В техподдержку</span>
               </button>
             </div>
+            <button type="button" className="action-chip action-chip--ghost" disabled={!canFinishTrip}>
+              <span>Завершить поездку</span>
+            </button>
             </>
           ) : null}
         </article>
         <article className="events-log">
-          <header>
+          <header
+            onWheel={(event) => {
+              if ((event.target as HTMLElement).closest('button')) return
+              applyWheelToList(logListRef.current, event)
+            }}
+          >
             <h1>Логирование</h1>
             <button className="export-btn">
               <span>Экспорт</span>
               <ExportIcon />
             </button>
           </header>
-          <div className="log-head">
+          <div className="log-head" onWheel={(event) => applyWheelToList(logListRef.current, event)}>
             <span>время</span>
             <span>статус</span>
           </div>
-          <div className="log-list">
+          <div className="log-list" ref={logListRef}>
             {(selectedCar?.logs ?? []).map((event, idx) => (
               <div className="log-row" key={`${idx}-${event.message}`}>
                 <span>{formatLiveLogTime(idx, liveLogPulse)}</span>

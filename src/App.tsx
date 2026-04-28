@@ -11,6 +11,9 @@ type TripState = { routeIndex: number; segmentIndex: number; segmentProgress: nu
 type CarIndicatorKey = 'engine' | 'battery' | 'wheel' | 'temperature' | 'lidar'
 
 type NominatimHit = { lat: string; lon: string; display_name: string }
+const mapTileFilter = 'brightness(0.95) contrast(0.93) saturate(0) hue-rotate(-30deg) grayscale(0) sepia(0.08) opacity(0.88)'
+const mapShadowOverlayOpacity = 0.6
+const mapCoolOverlayOpacity = 0.65
 
 async function searchAddressNominatim(query: string, signal: AbortSignal): Promise<NominatimHit[]> {
   const q = query.trim()
@@ -811,6 +814,11 @@ function App() {
       maxZoom: 19,
       subdomains: 'abcd',
     }).addTo(map)
+    const tilePane = map.getPane('tilePane')
+    if (tilePane) {
+      tilePane.style.filter = mapTileFilter
+      tilePane.style.transition = 'filter 180ms ease'
+    }
 
     leafletMapRef.current = map
 
@@ -1363,6 +1371,18 @@ function App() {
           </header>
           <div className="map-canvas">
             <div className="map-live" ref={mapElementRef} />
+            <div
+              className="map-tone-overlay"
+              style={{ opacity: mapShadowOverlayOpacity }}
+              aria-hidden="true"
+              onClick={(event) => event.stopPropagation()}
+            />
+            <div
+              className="map-cool-overlay"
+              style={{ opacity: mapCoolOverlayOpacity }}
+              aria-hidden="true"
+              onClick={(event) => event.stopPropagation()}
+            />
             {isMapSearchOpen && (mapGeocodeLoading || mapGeocodeHits.length > 0) ? (
               <div
                 className="map-geocode-panel"

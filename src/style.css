@@ -580,6 +580,23 @@ body {
   cursor: default !important;
 }
 
+.map-tone-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: #1e2022;
+  z-index: 360;
+}
+
+.map-cool-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: #5ea9ff;
+  mix-blend-mode: soft-light;
+  z-index: 361;
+}
+
 .map-live *,
 .map-live .leaflet-container,
 .map-live .leaflet-grab,

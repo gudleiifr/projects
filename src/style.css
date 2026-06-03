@@ -1144,6 +1144,12 @@ body {
   line-height: 16px;
 }
 
+.car-badge-slot {
+  width: 44px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
 .car-badge {
   width: 44px;
   height: 40px;

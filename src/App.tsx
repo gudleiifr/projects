@@ -1,5 +1,13 @@
 import './style.css'
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type SyntheticEvent,
+} from 'react'
 import L, { type Map as LeafletMap } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
@@ -45,7 +53,8 @@ type Car = {
   alertIndicators?: CarIndicatorKey[]
 }
 
-const carBadgePrimarySrc = 'https://www.figma.com/api/mcp/asset/a86eaf06-1e91-45f8-8865-202791400a5b'
+const carBadgePrimarySrc = '/img.png'
+const carBadgeFallbackSrc = '/img.png'
 const carBadgeSecondarySrc = '/img2.png'
 const carBadgeMoskvichSrc = '/img3.png'
 
@@ -58,11 +67,11 @@ const fleet: Car[] = [
     hasAlert: true,
     alertIndicators: ['temperature', 'lidar'],
   },
-  { id: 'С205ЕР 77', model: 'Hyundai Sonata', charge: 96, status: 'В поездке' },
+  { id: 'С205ЕР 77', model: 'Москвич GTR', charge: 96, status: 'В поездке' },
   { id: 'К989ТВ 96', model: 'Москвич GTR', charge: 89, status: 'В поездке' },
   { id: 'Р941РМ 96', model: 'Москвич GTR', charge: 6, status: 'Свободен' },
-  { id: 'Н008ОС 77', model: 'Lada Granta', charge: 59, status: 'На зарядке', chargingIcon: true },
-  { id: 'Т321МК 77', model: 'Peugeot Boxer', charge: 41, status: 'На зарядке', chargingIcon: true },
+  { id: 'Н008ОС 77', model: 'Hyundai Sonata', charge: 59, status: 'На зарядке', chargingIcon: true },
+  { id: 'Т321МК 77', model: 'Москвич GTR', charge: 41, status: 'На зарядке', chargingIcon: true },
   {
     id: 'Е004РР 77',
     model: 'Hyundai Sonata',
@@ -71,22 +80,22 @@ const fleet: Car[] = [
     hasAlert: true,
     alertIndicators: ['engine', 'battery', 'lidar'],
   },
-  { id: 'Е089АМ 77', model: 'Peugeot Boxer', charge: 0, status: 'Вне сервиса' },
+  { id: 'Е089АМ 77', model: 'Hyundai Sonata', charge: 0, status: 'Вне сервиса' },
   { id: 'Е103КК 96', model: 'Hyundai Sonata', charge: 100, status: 'Вне сервиса' },
   { id: 'Е103КК 96', model: 'Hyundai Sonata', charge: 100, status: 'Вне сервиса' },
 ]
 
 const extraFleet: Car[] = [
-  { id: 'А120ВС 77', model: 'Hyundai Sonata', charge: 78, status: 'В поездке' },
-  { id: 'М450КТ 78', model: 'Lada Granta', charge: 52, status: 'На зарядке', chargingIcon: true },
-  { id: 'Х901ОР 98', model: 'Peugeot Boxer', charge: 34, status: 'На зарядке', chargingIcon: true },
+  { id: 'А120ВС 77', model: 'Москвич GTR', charge: 78, status: 'В поездке' },
+  { id: 'М450КТ 78', model: 'Hyundai Sonata', charge: 52, status: 'На зарядке', chargingIcon: true },
+  { id: 'Х901ОР 98', model: 'Hyundai Sonata', charge: 34, status: 'На зарядке', chargingIcon: true },
   { id: 'У313АА 97', model: 'Москвич GTR', charge: 87, status: 'В поездке' },
   { id: 'Т777ТТ 77', model: 'Москвич GTR', charge: 12, status: 'Свободен' },
   { id: 'С100СС 78', model: 'Hyundai Sonata', charge: 64, status: 'В поездке' },
-  { id: 'Р009РР 77', model: 'Lada Granta', charge: 26, status: 'Свободен' },
-  { id: 'В222ВВ 98', model: 'Peugeot Boxer', charge: 0, status: 'Вне сервиса' },
-  { id: 'Н707НН 97', model: 'Hyundai Sonata', charge: 91, status: 'В поездке' },
-  { id: 'К404КК 78', model: 'Lada Granta', charge: 43, status: 'На зарядке', chargingIcon: true },
+  { id: 'Р009РР 77', model: 'Hyundai Sonata', charge: 26, status: 'Свободен' },
+  { id: 'В222ВВ 98', model: 'Москвич GTR', charge: 0, status: 'Вне сервиса' },
+  { id: 'Н707НН 97', model: 'Москвич GTR', charge: 91, status: 'В поездке' },
+  { id: 'К404КК 78', model: 'Москвич GTR', charge: 43, status: 'На зарядке', chargingIcon: true },
 ]
 
 const defaultIncidentTemplates: LogTemplate[] = [
@@ -150,6 +159,13 @@ const getCarBadgeSrc = (car: Car | null) => {
   const idx = Number(car.uid.split('-').pop())
   if (!Number.isFinite(idx)) return carBadgePrimarySrc
   return idx % 2 === 0 ? carBadgePrimarySrc : carBadgeSecondarySrc
+}
+
+const handleCarBadgeImageError = (event: SyntheticEvent<HTMLImageElement>) => {
+  const img = event.currentTarget
+  if (img.dataset.fallbackApplied === 'true') return
+  img.dataset.fallbackApplied = 'true'
+  img.src = carBadgeFallbackSrc
 }
 
 function formatLogClock(d: Date) {
@@ -1536,7 +1552,16 @@ function App() {
         <article className="selected-car">
           <div className="selected-car-top">
             <div className="selected-car-left">
-              <img className="car-badge" src={getCarBadgeSrc(selectedCar)} alt="" />
+              <div className="car-badge-slot" aria-hidden={selectedCar ? undefined : true}>
+                {selectedCar ? (
+                  <img
+                    className="car-badge"
+                    src={getCarBadgeSrc(selectedCar)}
+                    alt=""
+                    onError={handleCarBadgeImageError}
+                  />
+                ) : null}
+              </div>
               <span className="charge">{selectedCar ? `${selectedCar.status === 'Вне сервиса' ? 0 : selectedCar.charge}%` : '0%'}</span>
               <BatteryDots charge={selectedCar ? (selectedCar.status === 'Вне сервиса' ? 0 : selectedCar.charge) : 0} />
             </div>
@@ -1690,7 +1715,12 @@ function App() {
             <article className="selected-car finish-trip-modal-selected-car">
               <div className="selected-car-top">
                 <div className="selected-car-left">
-                  <img className="car-badge" src={getCarBadgeSrc(selectedCar)} alt="" />
+                  <img
+                className="car-badge"
+                src={getCarBadgeSrc(selectedCar)}
+                alt=""
+                onError={handleCarBadgeImageError}
+              />
                   <span className="charge">{`${selectedCar.status === 'Вне сервиса' ? 0 : selectedCar.charge}%`}</span>
                   <BatteryDots charge={selectedCar.status === 'Вне сервиса' ? 0 : selectedCar.charge} />
                 </div>
